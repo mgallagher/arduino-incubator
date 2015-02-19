@@ -59,23 +59,23 @@ void loop()
   int keypad = analogRead(0);
   switch(keypad)
   {
-    // Right
+    // RIGHT
     case 0 ... 100:
       buttonState = 1;
       break;
-    // Up
+    // UP
     case 101 ... 200:
       buttonState = 2;
       break;
-    // Down
+    // DOWN
     case 201 ... 400:
       buttonState = 3;
       break;
-    // Left
+    // LEFT
     case 401 ... 600:
       buttonState = 4;
       break;
-    // 'Select' - This requires a short hold to activate
+    // SELECT - Requires a short hold to activate
     case 601 ... 800:
       if (!isButtonDown)
       {
@@ -94,6 +94,7 @@ void loop()
   }
 
   // We only want to perform the action once for each button press
+  // That's why we have this second switch
   if (buttonState != lastButtonState)
   {
     switch (buttonState)
