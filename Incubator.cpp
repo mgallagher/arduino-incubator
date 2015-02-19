@@ -85,7 +85,7 @@ void loop()
       else if (millis() - buttonDownTime > shortButtonHold)
       {
         buttonState = 5;
-        isButtonDown = false; // Not working as intended. See line 93
+        isButtonDown = false; // Not working as intended. See line 92
       }
       break;
     default:
