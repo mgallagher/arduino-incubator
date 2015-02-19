@@ -4,136 +4,186 @@
 #include <LiquidCrystal.h>
 #include <Arduino.h>
 
-// Variables will change:
-int ledState = LOW;             // ledState used to set the LED
-long previousMillis = 0;        // will store last time LED was updated
-
-// the follow variables is a long because the time, measured in miliseconds,
-// will quickly become a bigger number than can be stored in an int.
-long interval = 4000;           // interval at which to blink (milliseconds)
-
-// Define the pins
+// Pins
 #define ONE_WIRE_BUS 12
 #define ONE_WIRE_PWR 11
 #define RELAY_PIN 2
 #define BACKLIGHT_PIN 10
+#define BackLightOn(pin) pinMode(pin, INPUT)
+#define BackLightOff(pin) pinMode(pin, OUTPUT)
 
 LiquidCrystal lcd(8, 9, 4, 5, 6, 7);
-
 OneWire oneWire(ONE_WIRE_BUS);
+DallasTemperature sensor(&oneWire);
 
-// Pass our oneWire reference to Dallas Temperature. 
-DallasTemperature sensors(&oneWire);
+float lastTemp = 0.0;
+unsigned long prevMillisForInterval = 0;
+unsigned long buttonDownTime = 0;
+int buttonState = 0;
+int lastButtonState = 0;
+bool isBackLightOn = true;    // Can't use digitalRead with the backlight pin, so this will do
+bool isButtonDown = false;
 
-#define SafeBLon(pin) pinMode(pin, INPUT)
-#define SafeBLoff(pin) pinMode(pin, OUTPUT)
-
-// Globals
-int count = 0;
-float tempArray[2];
-float targetArray[2];
-float TARGET = 84.0;
-bool isFirstRun = true;
-bool relayOn = false;
+// Variables user might want to adjust
+float targetTemp = 80.0;            // Default target temperature
+const float tempAllowance = 0.0;    // How much below the target temp we'll allow before heating
+const int interval = 4000;          // How often we grab the temperature. Adjust as needed.
+const int shortButtonHold = 1000;   // How long we'll require for short holds
 
 void setup(void)
 {
   Serial.begin(9600);
-  pinMode(RELAY_PIN,OUTPUT);
+  pinMode(RELAY_PIN, OUTPUT);
   pinMode(ONE_WIRE_PWR, OUTPUT);
   digitalWrite(ONE_WIRE_PWR, HIGH);
+  sensor.setResolution(10);   // Decreases time to grab the temperature to ~200 ms.
+                              // Default is 12, which would normally take ~700 ms 
+                              // and frequently resulted in missed button presses
+  sensor.begin();
+  sensor.requestTemperatures();
   lcd.begin(16,2);
-  lcd.print(" Kombucha Mode ");
-  lcd.setCursor(0,1);
-  sensors.begin();
-  sensors.setResolution(10);
-  Serial.println(sensors.getResolution());
+  lcd.setCursor(0,0);
+  lcd.print("    Incubator   ");  // Welcome screen
+  delay(1000);
+  lcd.clear();
+  lcd.print("F: ");
+  lcd.print(sensor.getTempFByIndex(0));
+  lcd.setCursor(0,2);
+  lcd.print("Target: ");
+  lcd.print(targetTemp);  
 }
 
 void loop()
 {
-  // here is where you'd put code that needs to be running all the time.
-    //Check analog values from LCD Keypad Shield
-  int x = analogRead (0);
-  switch(x)
+  //Check analog values from LCD Keypad Shield
+  int keypad = analogRead(0);
+  switch(keypad)
   {
     // Right
     case 0 ... 100:
-      SafeBLon(BACKLIGHT_PIN);
-      lcd.display();
+      buttonState = 1;
       break;
     // Up
     case 101 ... 200:
-      TARGET += .5;
+      buttonState = 2;
       break;
     // Down
     case 201 ... 400:
-      TARGET -= .5;
+      buttonState = 3;
       break;
     // Left
     case 401 ... 600:
-      SafeBLoff(BACKLIGHT_PIN);
-      lcd.noDisplay();
+      buttonState = 4;
       break;
+    // 'Select' - This requires a short hold to activate
+    case 601 ... 800:
+      if (!isButtonDown)
+      {
+        buttonDownTime = millis();
+        isButtonDown = true;
+      }
+      else if (millis() - buttonDownTime > shortButtonHold)
+      {
+        buttonState = 5;
+        isButtonDown = false; // Not working as intended. See line 93
+      }
+      break;
+    default:
+      isButtonDown = false;   // This is the only way I can get the short button toggle to work
+      buttonState = -1;
   }
-  // if (x < 100) {
-  //   //Right
-  //   SafeBLon(BACKLIGHT_PIN);
-  //   lcd.display();
-  // } else if (x < 200) {
-  //   //Up
-  //   TARGET += .5; 
-  // } else if (x < 400){
-  //   //Down
-  //   TARGET -= .5; 
-  // } else if (x < 600){
-  //   //Left
-  //   SafeBLoff(BACKLIGHT_PIN);
-  //   lcd.noDisplay();
-  // } else if (x < 800){
-  //   //Select
-  // }
-  // check to see if it's time to blink the LED; that is, if the 
-  // difference between the current time and last time you blinked 
-  // the LED is bigger than the interval at which you want to 
-  // blink the LED.
-  unsigned long currentMillis = millis();
- 
-  if(currentMillis - previousMillis > interval) {
-    // // save the last time you blinked the LED 
-    previousMillis = currentMillis;   
 
-    // // if the LED is off turn it on and vice-versa:
-    // if (ledState == LOW)
-    //   ledState = HIGH;
-    // else
-    //   ledState = LOW;
-    
-    // set the LED with the ledState of the variable:
-    unsigned long before = millis();
-    sensors.requestTemperatures(); // Send the command to get temperatures
-    
-    float tempF = sensors.requestTemperaturesByAddress(0);
-    unsigned long after = millis();
-    targetArray[count] = TARGET;
-    tempArray[count] = tempF;
-    count++;
-    if (count == 2)
+  // We only want to perform the action once for each button press
+  if (buttonState != lastButtonState)
+  {
+    switch (buttonState)
     {
-      count = 0;
+      // RIGHT - Increase target 10 degrees
+      case 1:
+        targetTemp += 10.0;
+        lcd.setCursor(0,1);
+        lcd.print("Target: ");
+        lcd.print(targetTemp);
+        break;
+      // UP - Increase target half degree
+      case 2:
+        targetTemp += .5;
+        lcd.setCursor(0,1);
+        lcd.print("Target: ");
+        lcd.print(targetTemp);
+        break;
+      // DOWN - Decrease target half degree
+      case 3:
+        targetTemp -= .5;
+        lcd.setCursor(0,1);
+        lcd.print("Target: ");
+        lcd.print(targetTemp);
+        break;
+      // LEFT - Decrease target 10 degrees
+      case 4:
+        targetTemp -= 10.0;
+        lcd.setCursor(0,1);
+        lcd.print("Target: ");
+        lcd.print(targetTemp);
+        break;
+      // SELECT - Toggle LCD (with backlight) on/off. 
+      case 5:
+        if (isBackLightOn)
+        {
+          BackLightOff(BACKLIGHT_PIN);
+          lcd.noDisplay();
+          isBackLightOn = false;
+        }
+        else
+        {
+          BackLightOn(BACKLIGHT_PIN);
+          lcd.display();
+          isBackLightOn = true;
+        }
+        break;
     }
-    // Makes it so only new temperature readings are displayed
-    // if (tempArray[0] != tempArray[1] || targetArray[0] != targetArray[1])
-    // {
-      lcd.clear();
-      lcd.print("F: ");
-      lcd.print(tempF);
-      lcd.setCursor(0,2);
-      lcd.print("Target: ");
-      lcd.print(TARGET);
+  }
+  lastButtonState = buttonState;
 
-      
-      Serial.println(after - before);
-    // }
+  unsigned long currentMillis = millis();
+  // Once we're above our interval, we poll the temperature sensor
+  if(currentMillis - prevMillisForInterval > interval) 
+  {
+    prevMillisForInterval = currentMillis;
+
+    // Grab the temperature
+    sensor.requestTemperatures();
+    float currentTemp = sensor.getTempFByIndex(0);
+
+    if (currentTemp != lastTemp)
+    {
+      lcd.setCursor(3,0);
+      lcd.print(currentTemp);
+      lcd.setCursor(0,1);
+      lcd.print("Target: ");
+      lcd.print(targetTemp);      
+    }
+    lastTemp = currentTemp;
+
+    // Toggle relay
+    if (currentTemp - tempAllowance < targetTemp)
+    {
+      if (digitalRead(RELAY_PIN) == LOW)
+      {
+        digitalWrite(RELAY_PIN, HIGH);
+        lcd.setCursor(15,0);
+        lcd.print("*");   // An indicator on the LCD for when the relay is on
+      }
+    }
+    else
+    {
+      digitalWrite(RELAY_PIN, LOW);
+      lcd.setCursor(15,0);
+      lcd.print(" ");     // Remove indicator if relay is off, duh
+    }
+    // Used these for timing operations
+    // unsigned long before = millis();
+    // unsigned long after = millis();
+    // Serial.println(after - before);
   }
 }
